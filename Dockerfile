@@ -26,7 +26,7 @@ COPY smtp-graph-relay.py .
 
 USER appuser
 
-EXPOSE 2525
+EXPOSE 8587
 
 ENV PYTHONUNBUFFERED=1
 

@@ -9,6 +9,10 @@ docker run \
   -e TENANT_ID="" \
   -e SENDER="a@b.co" \
   -e RECIPIENT="c@d.co" \
-  -p 2525:2525 \
+  -e CERT_FILE="/path/to/cert" \
+  -e KEY_FILE="/path/to/key" \
+  -p 8587:8587 \
+  -v /local/path/to/cert:/path/to/cert:ro
+  -v /local/path/to/key:/path/to/key:ro
   smtp-graph-relay:latest
 ```
