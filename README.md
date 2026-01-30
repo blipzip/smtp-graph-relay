@@ -2,7 +2,8 @@
 A primitive SMTP server that will relay requests to the MS Graph mail API
 
 ```
-docker build -t smtp-graph-relay .
+mailuser="someusername"
+useradd -r -m "$mailuser"
 docker run \
   -e CLIENT_ID="" \
   -e SECRET_ID="" \
@@ -14,5 +15,6 @@ docker run \
   -p 8587:8587 \
   -v /local/path/to/cert:/path/to/cert:ro
   -v /local/path/to/key:/path/to/key:ro
+  -u "$(id -u $mailuser):$(id -g $mailuser)"
   smtp-graph-relay:latest
 ```
