@@ -4,6 +4,7 @@ import ssl
 from aiosmtpd.controller import Controller
 from email.parser import BytesParser
 from email.policy import default
+from email.header import decode_header
 import aiohttp
 
 # =========================
@@ -29,6 +30,22 @@ GRAPH_SEND_URL = f"https://graph.microsoft.com/v1.0/users/{SENDER}/sendMail"
 # =========================
 # GRAPH CLIENT (ASYNC)
 # =========================
+
+def get_subject(msg) -> str:
+    raw = msg.get("Subject", "")
+
+    decoded_parts = decode_header(raw)
+    subject = ""
+
+    for part, encoding in decoded_parts:
+        if isinstance(part, bytes):
+            subject += part.decode(encoding or "utf-8", errors="ignore")
+        else:
+            subject += part
+
+    return subject
+
+
 async def get_graph_token(session: aiohttp.ClientSession) -> str:
     data = {
         "client_id": CLIENT_ID,
@@ -45,13 +62,13 @@ async def get_graph_token(session: aiohttp.ClientSession) -> str:
         return payload["access_token"]
 
 
-async def send_mail(body: str):
+async def send_mail(body: str, subject: str):
     async with aiohttp.ClientSession() as session:
         token = await get_graph_token(session)
 
         payload = {
             "message": {
-                "subject": "Forwarded message",
+                "subject": subject,
                 "body": {
                     "contentType": "Text",
                     "content": body,
@@ -81,6 +98,7 @@ async def send_mail(body: str):
 class MailHandler:
     async def handle_DATA(self, server, session, envelope):
         msg = BytesParser(policy=default).parsebytes(envelope.original_content)
+        subject = get_subject(msg)
 
         if msg.is_multipart():
             parts = []
@@ -104,9 +122,9 @@ class MailHandler:
             else:
                 body = ""
 
-        print("📨 Received mail — forwarding via Graph")
+        print(f"Received mail - {subject} — forwarding via Graph")
 
-        await send_mail(body)
+        await send_mail(body, subject)
 
         return "250 Message accepted for delivery"
 
@@ -126,7 +144,7 @@ async def main():
     )
 
     controller.start()
-    print(f"✅ SMTP server listening on {LISTEN_HOST}:{LISTEN_PORT}")
+    print(f"SMTP server listening on {LISTEN_HOST}:{LISTEN_PORT}")
 
     try:
         while True:
