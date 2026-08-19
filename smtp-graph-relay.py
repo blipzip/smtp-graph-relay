@@ -3,8 +3,10 @@ import os
 import ssl
 from aiosmtpd.controller import Controller
 from email.parser import BytesParser
-from email.policy import default
 from email.header import decode_header
+from email import policy
+from email.parser import BytesParser
+from email.utils import getaddresses
 import aiohttp
 
 # =========================
@@ -14,7 +16,9 @@ LISTEN_HOST = "0.0.0.0"
 LISTEN_PORT = 8587
 
 SENDER = os.environ["SENDER"]
-RECIPIENT = os.environ["RECIPIENT"]
+
+ALLOWED_DOMAINS = os.environ.get("ALLOWED_DOMAINS", "").split(",")
+ALLOWED_ADDRESSES = os.environ.get("ALLOWED_ADDRESSES", "").split(",")
 
 TENANT_ID = os.environ["TENANT_ID"]
 CLIENT_ID = os.environ["CLIENT_ID"]
@@ -30,6 +34,23 @@ GRAPH_SEND_URL = f"https://graph.microsoft.com/v1.0/users/{SENDER}/sendMail"
 # =========================
 # GRAPH CLIENT (ASYNC)
 # =========================
+def allowed_recipient(addr, allowed):
+    addr = addr.lower()
+    
+    if addr in allowed:
+        return True
+
+    domain = addr.split("@")[-1]
+
+    if domain in allowed:
+        return True
+
+    return False
+
+def filter_recipients(addresses) -> list | None:
+    return [{"emailAddress": {"address": addr}} for addr in addresses if allowed_recipient(addr, ALLOWED_ADDRESSES)]
+
+
 
 def get_subject(msg) -> str:
     raw = msg.get("Subject", "")
@@ -60,12 +81,7 @@ async def get_graph_token(session: aiohttp.ClientSession) -> str:
 
         payload = await resp.json()
         return payload["access_token"]
-
-
-async def send_mail(body: str, subject: str):
-    async with aiohttp.ClientSession() as session:
-        token = await get_graph_token(session)
-
+def generate_payload(body: str, subject: str, to_addrs: list | None, cc_addrs: list | None, bcc_addrs: list | None) -> dict:
         payload = {
             "message": {
                 "subject": subject,
@@ -73,10 +89,24 @@ async def send_mail(body: str, subject: str):
                     "contentType": "Text",
                     "content": body,
                 },
-                "toRecipients": [{"emailAddress": {"address": RECIPIENT}}],
             },
             "saveToSentItems": False,
         }
+
+        if to_addrs:
+            payload["message"]["toRecipients"] = to_addrs
+
+        if cc_addrs:
+            payload["message"]["ccRecipients"] = cc_addrs
+        
+        if bcc_addrs:
+            payload["message"]["bccRecipients"] = bcc_addrs
+        
+        return payload
+
+async def send_mail(payload: dict):
+    async with aiohttp.ClientSession() as session:
+        token = await get_graph_token(session)
 
         async with session.post(
             GRAPH_SEND_URL,
@@ -97,7 +127,7 @@ async def send_mail(body: str, subject: str):
 # =========================
 class MailHandler:
     async def handle_DATA(self, server, session, envelope):
-        msg = BytesParser(policy=default).parsebytes(envelope.original_content)
+        msg = BytesParser(policy=policy.default).parsebytes(envelope.original_content)
         subject = get_subject(msg)
 
         if msg.is_multipart():
@@ -123,8 +153,12 @@ class MailHandler:
                 body = ""
 
         print(f"Received mail - {subject} — forwarding via Graph")
+        to_addrs = filter_recipients(getaddresses(msg.get_all("to", [])))
+        cc_addrs = filter_recipients(getaddresses(msg.get_all("cc", [])))
+        bcc_addrs = filter_recipients(getaddresses(msg.get_all("bcc", [])))
 
-        await send_mail(body, subject)
+        payload = generate_payload(body, subject, to_addrs, cc_addrs, bcc_addrs)
+        await send_mail(payload)
 
         return "250 Message accepted for delivery"
 
